@@ -1,65 +1,24 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using Unity.Collections;
-using Unity.Jobs;
-using Unity.XR.CoreUtils;
 using UnityEngine;
+using UnityEngine.Pool;
+using UnityEngine.Serialization;
 using UnityEngine.XR.Hands;
 using UnityEngine.XR.Interaction.Toolkit;
-using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
-
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
 namespace ubco.ovilab.HPUI.Interaction
 {
-    [SelectionBase]
-    [DisallowMultipleComponent]
+
     [RequireComponent(typeof(XRHandTrackingEvents))]
-    public class ThumbCapInteractor: XRBaseInteractor, IHPUIInteractor
+    public class ThumbCapInteractor : XRBaseInteractor, IHPUIInteractor
     {
-        public new InteractorHandedness handedness
-        {
-            get => base.handedness;
-            set => base.handedness = value;
-        }
+        public IHPUIGestureLogic GestureLogic { get; set; }
+        public float InteractionSelectionRadius => interactionSelectionRadius;
+        public float TapDistanceThreshold => tapDistanceThreshold;
+        public float TapTimeThreshold => tapTimeThreshold;
 
-        [Tooltip("The thumb cap mesh with somewhat equidistant vertices using QuadriFlow Requadrangulation")]
-        [SerializeField]
-        private SkinnedMeshRenderer thumbCapMesh;
-
-        [Tooltip("The time threshold at which an interaction would be treated as a gesture.")]
-        [SerializeField]
-        private float tapTimeThreshold;
-
-        /// <summary>
-        /// The time threshold at which an interaction would be treated as a gesture.
-        /// That is, if the interactor is in contact with an
-        /// interactable for more than this threshold, it would be
-        /// treated as a gesture.
-        /// </summary>
-        public float TapTimeThreshold
-        {
-            get => tapTimeThreshold;
-            set => tapTimeThreshold = value;
-        }
-
-        [Tooltip("The distance threshold at which an interaction would be treated as a gesture.")]
-        [SerializeField]
-        private float tapDistanceThreshold;
-
-        /// <summary>
-        /// The distance threshold at which an interaction would be treated as a gesture.
-        /// That is, if the interactor has moved more than this value
-        /// after coming into contact with an interactable, it would be
-        /// treated as a gesture.
-        /// </summary>
-        public float TapDistanceThreshold
-        {
-            get => tapDistanceThreshold;
-            set => tapDistanceThreshold = value;
-        }
-
-        [SerializeField]
-        [Tooltip("Event triggered on tap")]
         private HPUITapEvent tapEvent = new HPUITapEvent();
 
         /// <inheritdoc />
@@ -76,113 +35,115 @@ namespace ubco.ovilab.HPUI.Interaction
         [Tooltip("Event triggered on hover update.")]
         private HPUIHoverUpdateEvent hoverUpdateEvent = new HPUIHoverUpdateEvent();
 
-        /// <inheritdoc />
-        public HPUIHoverUpdateEvent HoverUpdateEvent { get => hoverUpdateEvent; set => hoverUpdateEvent = value; }
-
         [SerializeField]
         [Tooltip("Interaction hover radius.")]
         private float interactionHoverRadius = 0.015f;
 
-        [SerializeField]
-        [Tooltip("Interaction select radius.")]
-        private float interactionSelectionRadius = 0.015f;
+        /// <inheritdoc />
+        public HPUIHoverUpdateEvent HoverUpdateEvent { get => hoverUpdateEvent; set => hoverUpdateEvent = value; }
 
-        /// <summary>
-        /// Interaction selection radius.
-        /// </summary>
-        public float InteractionSelectionRadius
-        {
-            get => interactionSelectionRadius;
-            set => interactionSelectionRadius = value;
-        }
+        protected IHPUIGestureLogic gestureLogic;
 
-        [SerializeField]
-        [Tooltip("If true, select only happens for the target with highest priority.")]
-        private bool selectOnlyPriorityTarget = true;
-
-        /// <summary>
-        /// If true, select only happens for the target with the highest priority.
-        /// </summary>
-        public bool SelectOnlyPriorityTarget { get => selectOnlyPriorityTarget; set => selectOnlyPriorityTarget = value; }
-
-        // QueryTriggerInteraction.Ignore
-        [SerializeField]
-        [Tooltip("Physics layer mask used for limiting poke sphere overlap.")]
-        private LayerMask physicsLayer = Physics.AllLayers;
-
-        /// <summary>
-        /// Physics layer mask used for limiting poke sphere overlap.
-        /// </summary>
-        public LayerMask PhysicsLayer { get => physicsLayer; set => physicsLayer = value; }
-
-        [SerializeField]
-        [Tooltip("Determines whether triggers should be collided with.")]
-        private QueryTriggerInteraction physicsTriggerInteraction = QueryTriggerInteraction.Ignore;
-
-        /// <summary>
-        /// Determines whether triggers should be collided with.
-        /// </summary>
-        public QueryTriggerInteraction PhysicsTriggerInteraction { get => physicsTriggerInteraction; set => physicsTriggerInteraction = value; }
-
+        [SerializeField] private SkinnedMeshRenderer foreSkin;
+        [SerializeField] private float interactionSelectionRadius = 0.001f;
+        [SerializeField] private float tapDistanceThreshold;
+        [SerializeField] private float tapTimeThreshold;
         [SerializeField] private int startIndex = 0;
         [SerializeField] private int endIndex = 2680;
 
-        [SerializeField]
-        [Tooltip("Show sphere rays used for interaction selections.")]
-        private bool showDebugRayVisual = true;
-
-        /// <summary>
-        /// Show sphere rays used for interaction selections.
-        /// </summary>
-        public bool ShowDebugRayVisual { get => showDebugRayVisual; set => showDebugRayVisual = value; }
+        public bool SelectOnlyPriorityTarget { get => selectOnlyPriorityTarget; set => selectOnlyPriorityTarget = value; }
+        private Vector3 lastInteractionPoint;
+        private PhysicsScene physicsScene;
+        private RaycastHit[] rayCastHits = new RaycastHit[200];
+        private GameObject visualsObject;
+        private Dictionary<IHPUIInteractable, InteractionInfo> validTargets = new();
+        private Dictionary<IHPUIInteractable, List<InteractionInfo>> tempValidTargets = new();
+        protected Dictionary<XRHandJointID, Vector3> jointLocations = new();
 
         [SerializeField]
         [Tooltip("(optional) XR Origin transform. If not set, will attempt to find XROrigin and use its transform.")]
         private Transform xrOriginTransform;
 
-        /// <summary>
-        /// XR Origin transform. If not set, will attempt to find XROrigin and use its transform.
-        /// </summary>
-        public Transform XROriginTransform { get => xrOriginTransform; set => xrOriginTransform = value; }
-
-        private Dictionary<IHPUIInteractable, InteractionInfo> validTargets = new Dictionary<IHPUIInteractable, InteractionInfo>();
-        private PhysicsScene physicsScene;
+        //Mesh Variables
         private Mesh bakedMesh;
-        private Vector3[] vertices, normals;
-        private RaycastHit[] raycastHits;
-        private bool[] raycastHitResults;
-        private int vertexCount;
-        private Transform thumbTransform;
+        public event Action<string> data;
+
+        #region JointData
+        protected List<XRHandJointID> trackedJoints = new List<XRHandJointID>()
+        {
+            XRHandJointID.IndexProximal, XRHandJointID.IndexIntermediate, XRHandJointID.IndexDistal, XRHandJointID.IndexTip,
+            XRHandJointID.MiddleProximal, XRHandJointID.MiddleIntermediate, XRHandJointID.MiddleDistal, XRHandJointID.MiddleTip,
+            XRHandJointID.RingProximal, XRHandJointID.RingIntermediate, XRHandJointID.RingDistal, XRHandJointID.RingTip,
+            XRHandJointID.LittleProximal, XRHandJointID.LittleIntermediate, XRHandJointID.LittleDistal, XRHandJointID.LittleTip,
+            XRHandJointID.ThumbTip
+        };
+        private Dictionary<XRHandJointID, List<XRHandJointID>> trackedJointsToRelatedFingerJoints = new ()
+        {
+            {XRHandJointID.IndexProximal, new List<XRHandJointID>() {XRHandJointID.IndexProximal, XRHandJointID.IndexIntermediate, XRHandJointID.IndexDistal, XRHandJointID.IndexTip}},
+            {XRHandJointID.IndexIntermediate, new List<XRHandJointID>() {XRHandJointID.IndexProximal, XRHandJointID.IndexIntermediate, XRHandJointID.IndexDistal, XRHandJointID.IndexTip}},
+            {XRHandJointID.IndexDistal, new List<XRHandJointID>() {XRHandJointID.IndexProximal, XRHandJointID.IndexIntermediate, XRHandJointID.IndexDistal, XRHandJointID.IndexTip}},
+            {XRHandJointID.IndexTip, new List<XRHandJointID>() {XRHandJointID.IndexProximal, XRHandJointID.IndexIntermediate, XRHandJointID.IndexDistal, XRHandJointID.IndexTip}},
+            {XRHandJointID.MiddleProximal, new List<XRHandJointID>() {XRHandJointID.MiddleProximal, XRHandJointID.MiddleIntermediate, XRHandJointID.MiddleDistal, XRHandJointID.MiddleTip}},
+            {XRHandJointID.MiddleIntermediate, new List<XRHandJointID>() {XRHandJointID.MiddleProximal, XRHandJointID.MiddleIntermediate, XRHandJointID.MiddleDistal, XRHandJointID.MiddleTip}},
+            {XRHandJointID.MiddleDistal, new List<XRHandJointID>() {XRHandJointID.MiddleProximal, XRHandJointID.MiddleIntermediate, XRHandJointID.MiddleDistal, XRHandJointID.MiddleTip}},
+            {XRHandJointID.MiddleTip, new List<XRHandJointID>() {XRHandJointID.MiddleProximal, XRHandJointID.MiddleIntermediate, XRHandJointID.MiddleDistal, XRHandJointID.MiddleTip}},
+            {XRHandJointID.RingProximal, new List<XRHandJointID>() {XRHandJointID.RingProximal, XRHandJointID.RingIntermediate, XRHandJointID.RingDistal, XRHandJointID.RingTip}},
+            {XRHandJointID.RingIntermediate, new List<XRHandJointID>() {XRHandJointID.RingProximal, XRHandJointID.RingIntermediate, XRHandJointID.RingDistal, XRHandJointID.RingTip}},
+            {XRHandJointID.RingDistal, new List<XRHandJointID>() {XRHandJointID.RingProximal, XRHandJointID.RingIntermediate, XRHandJointID.RingDistal, XRHandJointID.RingTip}},
+            {XRHandJointID.RingTip, new List<XRHandJointID>() {XRHandJointID.RingProximal, XRHandJointID.RingIntermediate, XRHandJointID.RingDistal, XRHandJointID.RingTip}},
+            {XRHandJointID.LittleProximal, new List<XRHandJointID>() {XRHandJointID.LittleProximal, XRHandJointID.LittleIntermediate, XRHandJointID.LittleDistal, XRHandJointID.LittleTip}},
+            {XRHandJointID.LittleIntermediate, new List<XRHandJointID>() {XRHandJointID.LittleProximal, XRHandJointID.LittleIntermediate, XRHandJointID.LittleDistal, XRHandJointID.LittleTip}},
+            {XRHandJointID.LittleDistal, new List<XRHandJointID>() {XRHandJointID.LittleProximal, XRHandJointID.LittleIntermediate, XRHandJointID.LittleDistal, XRHandJointID.LittleTip}},
+            {XRHandJointID.LittleTip, new List<XRHandJointID>() {XRHandJointID.LittleProximal, XRHandJointID.LittleIntermediate, XRHandJointID.LittleDistal, XRHandJointID.LittleTip}},
+        };
+
+
+
+        #endregion
+
+        private XRHandTrackingEvents xrHandTrackingEvents;
+        private bool receivedNewJointData;
+        [SerializeField] private Vector3[] vertices;
+        [SerializeField] private Vector3[] normals;
+        private bool selectOnlyPriorityTarget = true;
+
+
+        #region UnityEvents
+
+        protected override void OnEnable()
+        {
+            base.OnEnable();
+        }
 
         protected override void Awake()
         {
             base.Awake();
-            keepSelectedTargetValid = true;
+            foreSkin = GetComponent<SkinnedMeshRenderer>();
             physicsScene = gameObject.scene.GetPhysicsScene();
-
-            if (XROriginTransform == null)
+            xrHandTrackingEvents = GetComponent<XRHandTrackingEvents>();
+            foreach(XRHandJointID id in trackedJoints)
             {
-                XROriginTransform = FindObjectOfType<XROrigin>()?.transform;
-                if (XROriginTransform == null)
-                {
-                    Debug.LogError($"XR Origin not found! Manually set value for XROriginTransform");
-                }
+                jointLocations.Add(id, Vector3.zero);
             }
+            xrHandTrackingEvents.jointsUpdated.AddListener(UpdateJointsData);
+        }
 
-            if(thumbCapMesh==null)
+        protected void UpdateJointsData(XRHandJointsUpdatedEventArgs args)
+        {
+            foreach(XRHandJointID id in trackedJoints)
             {
-                thumbCapMesh = GetComponent<SkinnedMeshRenderer>();
-                if (thumbCapMesh == null)
+                if ( args.hand.GetJoint(id).TryGetPose(out Pose pose) )
                 {
-                    Debug.LogError("Can't find thumbcap mesh!");
+                    jointLocations[id] = xrOriginTransform.TransformPoint(pose.position);
+                    receivedNewJointData = true;
                 }
             }
         }
 
-        protected override void Start()
+        void Start()
         {
-            base.Start();
-            Init();
+            InitialiseMesh();
+            UpdateLogic();
         }
 
         protected override void OnDestroy()
@@ -190,71 +151,135 @@ namespace ubco.ovilab.HPUI.Interaction
             base.OnDestroy();
         }
 
-        protected void Update()
-        {
-            FireRayCasts();
-        }
 
-        protected void Init()
-        {
-            bakedMesh = new Mesh();
-            vertexCount = thumbCapMesh.sharedMesh.vertexCount;
-            raycastHits = new RaycastHit[vertexCount];
-            raycastHitResults = new bool[vertexCount];
-            vertices = new Vector3[vertexCount];
-            normals = new Vector3[vertexCount];
-            thumbTransform = thumbCapMesh.transform;
-        }
+        #endregion
 
-        protected void FireRayCasts()
-        {
-            thumbCapMesh.BakeMesh(bakedMesh);
-            vertices = bakedMesh.vertices;
-            normals = bakedMesh.normals;
 
-            for (int i = 0; i < vertexCount; i++)
-            {
-                Vector3 position = thumbTransform.TransformPoint(vertices[i]);
-                Vector3 direction = thumbTransform.TransformDirection(normals[i]);
+        #region XRBaseInteractable
 
-                Ray ray = new Ray(position, direction);
-                if (Physics.Raycast(ray, out RaycastHit hitData, InteractionSelectionRadius))
-                {
-                    raycastHitResults[i] = true;
-                    raycastHits[i] = hitData;
-                    if(showDebugRayVisual) Debug.DrawRay(position,direction.normalized * InteractionSelectionRadius, Color.green);
-                }
-                else
-                {
-                    raycastHitResults[i] = false;
-                    raycastHits[i] = default;
-                    if(showDebugRayVisual) Debug.DrawRay(position,direction.normalized * InteractionSelectionRadius, Color.red);
-                }
-            }
-            ProcessRaycastHitData();
-        }
-
-        protected void ProcessRaycastHitData()
-        {
-            //TODO: Your thumbcap logic here
-        }
-
-        #region XRI Manager Functions
-
-        /// <inheritdoc />
         public override void PreprocessInteractor(XRInteractionUpdateOrder.UpdatePhase updatePhase)
         {
+            Transform attachTransform = GetAttachTransform(null);
+            Vector3 interactionPoint = attachTransform.position;
+            Vector3 hoverEndPoint = attachTransform.position;
+
             base.PreprocessInteractor(updatePhase);
-            //TODO: Implement interactor processing logic here
+            UnityEngine.Profiling.Profiler.BeginSample("HPUIInteractor.ProcessInteractor");
+            if (updatePhase == XRInteractionUpdateOrder.UpdatePhase.Dynamic)
+            {
+                validTargets.Clear();
+                foreSkin.BakeMesh(bakedMesh, true);
+                vertices = bakedMesh.vertices;
+                normals = bakedMesh.normals;
+
+                transform.TransformPoints(vertices);
+
+                tempValidTargets.Clear();
+                ShootRayCastsFromSurface(vertices, normals, out List<RaycastHit> raycastHits);
+                foreach (RaycastHit rayCastHit in raycastHits)
+                {
+                    Debug.Log(rayCastHits.Length);
+                    bool validInteractable = false;
+                    if (interactionManager.TryGetInteractableForCollider(rayCastHit.collider, out var interactable) &&
+                        interactable is IHPUIInteractable hpuiInteractable && hpuiInteractable.IsHoverableBy(this))
+                    {
+                        if (!tempValidTargets.TryGetValue(hpuiInteractable, out List<InteractionInfo> infoList))
+                        {
+                            infoList = ListPool<InteractionInfo>.Get();
+                            tempValidTargets.Add(hpuiInteractable, infoList);
+                        }
+                        infoList.Add(new InteractionInfo(rayCastHit.distance, rayCastHit.point, rayCastHit.collider));
+                    }
+                }
+                Vector3 centroid;
+                float xEndPoint = 0, yEndPoint = 0, zEndPoint = 0;
+                float count = tempValidTargets.Sum(kvp => kvp.Value.Count);
+                Debug.Log($"Temp Valid Targets {tempValidTargets.Count}");
+                UnityEngine.Profiling.Profiler.BeginSample("raycast centroid");
+
+                foreach (KeyValuePair<IHPUIInteractable, List<InteractionInfo>> kvp in tempValidTargets)
+                {
+                    int localCount = kvp.Value.Count;
+                    float localXEndPoint = 0, localYEndPoint = 0, localZEndPoint = 0;
+
+                    foreach(InteractionInfo i in kvp.Value)
+                    {
+                        xEndPoint += i.point.x;
+                        yEndPoint += i.point.y;
+                        zEndPoint += i.point.z;
+                        localXEndPoint += i.point.x;
+                        localYEndPoint += i.point.y;
+                        localZEndPoint += i.point.z;
+                    }
+
+                    centroid = new Vector3(localXEndPoint, localYEndPoint, localZEndPoint) / count;
+                    InteractionInfo closestToCentroid = kvp.Value.OrderBy(el => (el.point - centroid).magnitude).First();
+                    // This distance is needed to compute the selection
+                    float shortestDistance = kvp.Value.Min(el => el.distance);
+                    closestToCentroid.heuristic = (((float)count / (float)localCount) + 1) * shortestDistance;
+                    closestToCentroid.distance = shortestDistance;
+                    closestToCentroid.extra = (float)localCount;
+
+                    validTargets.Add(kvp.Key, closestToCentroid);
+                    Debug.Log($"Valid Targets: {validTargets.Count}");
+                    ListPool<InteractionInfo>.Release(kvp.Value);
+                }
+
+                if (count > 0)
+                {
+                    hoverEndPoint = new Vector3(xEndPoint, yEndPoint, zEndPoint) / count;;
+                }
+                UnityEngine.Profiling.Profiler.EndSample();
+
+                try
+                {
+                    if (validTargets.Count > 0)
+                    {
+                        HoverUpdateEvent?.Invoke(new HPUIHoverUpdateEventArgs(this, hoverEndPoint, attachTransform.position));
+                    }
+                }
+                finally
+                {
+                    //Debug.Log($"Valid Target Count {validTargets.Count}");
+                    UnityEngine.Profiling.Profiler.BeginSample("gestureLogic");
+                    GestureLogic.Update(validTargets.ToDictionary(kvp => kvp.Key, kvp => new HPUIInteractionData(kvp.Value.distance, kvp.Value.heuristic, kvp.Value.extra)));
+                    UnityEngine.Profiling.Profiler.EndSample();
+                }
+            }
+            UnityEngine.Profiling.Profiler.EndSample();
         }
 
-        /// <inheritdoc />
+
+        #endregion
+
+        protected void InitialiseMesh()
+        {
+            bakedMesh = new Mesh();
+            int vertexCount = foreSkin.sharedMesh.vertexCount;
+        }
+
+        private void UpdateLogic()
+        {
+            // When values are changed in inspector, update the values
+            if (GestureLogic != null)
+            {
+                if (!(GestureLogic is HPUIGestureLogic))
+                {
+                    Debug.Log($"Non HPUIGestureLogic being used");
+                    return;
+                }
+                GestureLogic.Dispose();
+            }
+
+            // If using raycast, use heuristic
+            GestureLogic = new HPUIGestureLogic(this, TapTimeThreshold, TapDistanceThreshold, InteractionSelectionRadius, useHeuristic: true);
+        }
+
         public override void GetValidTargets(List<IXRInteractable> targets)
         {
             base.GetValidTargets(targets);
-            targets.Clear();
 
-            //TODO: Change this logic here as well?
+            targets.Clear();
             IEnumerable<IHPUIInteractable> filteredValidTargets = validTargets
                 .Where(kvp => (kvp.Key is IHPUIInteractable))
                 .GroupBy(kvp => kvp.Key.zOrder)
@@ -266,33 +291,55 @@ namespace ubco.ovilab.HPUI.Interaction
             targets.AddRange(filteredValidTargets);
         }
 
-        /// <inheritdoc />
         public override bool CanSelect(IXRSelectInteractable interactable)
         {
             bool canSelect = validTargets.TryGetValue(interactable as IHPUIInteractable, out InteractionInfo info) &&
                              info.distance < interactionSelectionRadius &&
                              ProcessSelectFilters(interactable);
-            return canSelect && (!SelectOnlyPriorityTarget);
+            return canSelect && (!SelectOnlyPriorityTarget || GestureLogic.IsPriorityTarget(interactable as IHPUIInteractable));
         }
 
-        #endregion
+        protected void ShootRayCastsFromSurface(Vector3[] _vertices, Vector3[] _normals, out List<RaycastHit> raycastHits)
+        {
+            UnityEngine.Profiling.Profiler.BeginSample("raycasts");
+            raycastHits = new List<RaycastHit>();
+            for (int i = 0; i < _vertices.Length; i++)
+            {
+                if (i < startIndex || i > endIndex)
+                {
+                    continue;
+                }
+                Vector3 start = _vertices[i];
+                Vector3 direction = transform.rotation  * _normals[i];
+                Ray rayCast = new(start, direction.normalized);
+                //Optimisation: Should be using RayCastNonAlloc but we have enough compute :)
+                if (Physics.Raycast(rayCast, out RaycastHit hit, interactionSelectionRadius))
+                {
+                    raycastHits.Add(hit);
+                    Debug.DrawLine(start, start + direction.normalized * interactionSelectionRadius, Color.green);
+                }
+                else
+                {
+                    Debug.DrawLine(start, start + direction.normalized * interactionSelectionRadius, Color.red);
+                }
+            }
+            UnityEngine.Profiling.Profiler.EndSample();
+        }
 
 
-        #region IHPUIInteractor interface
+        #region IHPUIInteractor
 
-        /// <inheritdoc />
+
         public void OnTap(HPUITapEventArgs args)
         {
             tapEvent?.Invoke(args);
         }
 
-        /// <inheritdoc />
         public void OnGesture(HPUIGestureEventArgs args)
         {
             gestureEvent?.Invoke(args);
         }
 
-        /// <inheritdoc />
         public bool GetDistanceInfo(IHPUIInteractable interactable, out DistanceInfo distanceInfo)
         {
             if (validTargets.TryGetValue(interactable, out InteractionInfo info))
@@ -309,20 +356,28 @@ namespace ubco.ovilab.HPUI.Interaction
             return false;
         }
 
+
         #endregion
 
-        struct InteractionInfo
-        {
-            public float distance;
-            public Vector3 point;
-            public Collider collider;
-
-            public InteractionInfo(float distance, Vector3 point, Collider collider) : this()
-            {
-                this.distance = distance;
-                this.point = point;
-                this.collider = collider;
-            }
-        }
     }
 }
+
+public struct InteractionInfo
+{
+    public float distance;
+    public Vector3 point;
+    public Collider collider;
+    public float heuristic;
+    public float extra;
+
+    public InteractionInfo(float distance, Vector3 point, Collider collider, float heuristic=0, float extra=0) : this()
+    {
+        this.distance = distance;
+        this.point = point;
+        this.collider = collider;
+        this.heuristic = heuristic;
+        this.extra = extra;
+    }
+}
+
+
