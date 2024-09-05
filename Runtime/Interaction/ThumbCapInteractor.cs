@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Pool;
 using UnityEngine.Serialization;
@@ -42,9 +43,14 @@ namespace ubco.ovilab.HPUI.Interaction
         /// <inheritdoc />
         public HPUIHoverUpdateEvent HoverUpdateEvent { get => hoverUpdateEvent; set => hoverUpdateEvent = value; }
 
+        /// <summary>
+        /// XR Origin transform. If not set, will attempt to find XROrigin and use its transform.
+        /// </summary>
+        public Transform XROriginTransform { get => xrOriginTransform; set => xrOriginTransform = value; }
+
         protected IHPUIGestureLogic gestureLogic;
 
-        [SerializeField] private SkinnedMeshRenderer foreSkin;
+        [SerializeField] private SkinnedMeshRenderer targetMeshSurface;
         [SerializeField] private float interactionSelectionRadius = 0.001f;
         [SerializeField] private float tapDistanceThreshold;
         [SerializeField] private float tapTimeThreshold;
@@ -118,12 +124,20 @@ namespace ubco.ovilab.HPUI.Interaction
         protected override void Awake()
         {
             base.Awake();
-            foreSkin = GetComponent<SkinnedMeshRenderer>();
+            targetMeshSurface = GetComponent<SkinnedMeshRenderer>();
             physicsScene = gameObject.scene.GetPhysicsScene();
             xrHandTrackingEvents = GetComponent<XRHandTrackingEvents>();
             foreach(XRHandJointID id in trackedJoints)
             {
                 jointLocations.Add(id, Vector3.zero);
+            }
+            if (XROriginTransform == null)
+            {
+                XROriginTransform = FindObjectOfType<XROrigin>()?.transform;
+                if (XROriginTransform == null)
+                {
+                    Debug.LogError($"XR Origin not found! Manually set value for XROriginTransform");
+                }
             }
             xrHandTrackingEvents.jointsUpdated.AddListener(UpdateJointsData);
         }
@@ -168,7 +182,7 @@ namespace ubco.ovilab.HPUI.Interaction
             if (updatePhase == XRInteractionUpdateOrder.UpdatePhase.Dynamic)
             {
                 validTargets.Clear();
-                foreSkin.BakeMesh(bakedMesh, true);
+                targetMeshSurface.BakeMesh(bakedMesh, true);
                 vertices = bakedMesh.vertices;
                 normals = bakedMesh.normals;
 
@@ -178,7 +192,7 @@ namespace ubco.ovilab.HPUI.Interaction
                 ShootRayCastsFromSurface(vertices, normals, out List<RaycastHit> raycastHits);
                 foreach (RaycastHit rayCastHit in raycastHits)
                 {
-                    Debug.Log(rayCastHits.Length);
+                    // Debug.Log(rayCastHits.Length);
                     bool validInteractable = false;
                     if (interactionManager.TryGetInteractableForCollider(rayCastHit.collider, out var interactable) &&
                         interactable is IHPUIInteractable hpuiInteractable && hpuiInteractable.IsHoverableBy(this))
@@ -194,7 +208,7 @@ namespace ubco.ovilab.HPUI.Interaction
                 Vector3 centroid;
                 float xEndPoint = 0, yEndPoint = 0, zEndPoint = 0;
                 float count = tempValidTargets.Sum(kvp => kvp.Value.Count);
-                Debug.Log($"Temp Valid Targets {tempValidTargets.Count}");
+                // Debug.Log($"Temp Valid Targets {tempValidTargets.Count}");
                 UnityEngine.Profiling.Profiler.BeginSample("raycast centroid");
 
                 foreach (KeyValuePair<IHPUIInteractable, List<InteractionInfo>> kvp in tempValidTargets)
@@ -221,7 +235,7 @@ namespace ubco.ovilab.HPUI.Interaction
                     closestToCentroid.extra = (float)localCount;
 
                     validTargets.Add(kvp.Key, closestToCentroid);
-                    Debug.Log($"Valid Targets: {validTargets.Count}");
+                    // Debug.Log($"Valid Targets: {validTargets.Count}");
                     ListPool<InteractionInfo>.Release(kvp.Value);
                 }
 
@@ -255,7 +269,7 @@ namespace ubco.ovilab.HPUI.Interaction
         protected void InitialiseMesh()
         {
             bakedMesh = new Mesh();
-            int vertexCount = foreSkin.sharedMesh.vertexCount;
+            int vertexCount = targetMeshSurface.sharedMesh.vertexCount;
         }
 
         private void UpdateLogic()
