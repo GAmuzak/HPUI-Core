@@ -12,6 +12,36 @@ namespace ubco.ovilab.HPUI.Interaction
         /// <inheritdoc />
         public float Y_size { get => collidersManager.YWidth * collidersManager.MeshYResolution; }
 
+        /// <summary>
+        /// X width of a single collider based on the mesh provided, in Unity units.
+        /// </summary>
+        public float SingleColliderXWidth { get => collidersManager.XWidth; }
+
+        /// <summary>
+        /// Y width of a single collider based on the mesh provided, in Unity units.
+        /// </summary>
+        public float SingleColliderYWidth { get => collidersManager.YWidth; }
+
+        /// <summary>
+        /// X Center of interactable (across the width of the finger).
+        /// </summary>
+        public float OffsetX { get => collidersManager.OffsetX; }
+
+        /// <summary>
+        /// Y Center of interactable (along the length of the finger).
+        /// </summary>
+        public float OffsetY { get => collidersManager.OffsetY; }
+
+        /// <summary>
+        /// The X resolution of the associated SkinnedMeshRenderer.
+        /// </summary>
+        public int MeshXResolution { get => collidersManager.MeshXResolution;}
+
+        /// <summary>
+        /// The X resolution of the associated SkinnedMeshRenderer.
+        /// </summary>
+        public int MeshYResolution { get => collidersManager.MeshYResolution;}
+
         [Tooltip("The associated SkinnedMeshRenderer used by this interactable")]
         [SerializeField] private SkinnedMeshRenderer staticHPUIMesh;
 
@@ -34,11 +64,7 @@ namespace ubco.ovilab.HPUI.Interaction
         [Tooltip("The X resolution of the associated SkinnedMeshRenderer.")]
         [SerializeField] private int meshXResolution;
 
-        /// <summary>
-        /// The X resolution of the associated SkinnedMeshRenderer.
-        /// </summary>
-        public int MeshXResolution => meshXResolution;
-        
+
         private StaticMeshCollidersManager collidersManager;
 
         protected override void Awake()
@@ -46,14 +72,14 @@ namespace ubco.ovilab.HPUI.Interaction
             base.Awake();
             collidersManager = GetComponent<StaticMeshCollidersManager>();
             Debug.Assert(collidersManager!=null);
-            colliders.AddRange(collidersManager.SetupColliders(StaticHPUIMesh, MeshXResolution));
+            colliders.AddRange(collidersManager.SetupColliders(StaticHPUIMesh, meshXResolution));
         }
 
         /// <inheritdoc />
         protected override void ComputeSurfaceBounds()
         {
         }
-        
+
         /// <inheritdoc />
         public override bool ComputeInteractorPosition(IHPUIInteractor interactor, out Vector2 position)
         {
